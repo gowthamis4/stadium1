@@ -134,10 +134,34 @@ export default function App() {
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [apiStatus, setApiStatus] = useState({
+    gemini: false,
+    maps: false,
+    sports: false,
+    weather: false,
+    twilio: false,
+    telegram: false
+  });
+
+  // Fetch API Diagnostics
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch('/api/diagnostics');
+        const data = await res.json();
+        setApiStatus(data);
+      } catch (err) {
+        console.error("Diagnostic Fetch Failed", err);
+      }
+    };
+    checkStatus();
+  }, []);
 
   const genAI = process.env.GEMINI_API_KEY 
     ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) 
-    : null;
+    : (import.meta as any).env?.VITE_GEMINI_API_KEY 
+      ? new GoogleGenAI({ apiKey: (import.meta as any).env?.VITE_GEMINI_API_KEY })
+      : null;
 
   // Clear speech feedback
   useEffect(() => {
@@ -953,15 +977,16 @@ export default function App() {
                   </h3>
                   <div className="space-y-4">
                     {[
-                      { name: 'Gemini Intelligence', key: process.env.GEMINI_API_KEY, status: 'Active' },
-                      { name: 'Google Maps Engine', key: (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY, status: 'Ready' },
-                      { name: 'Live Sports Feed', key: process.env.SPORTS_DATA_API_KEY, status: 'Connected' },
-                      { name: 'Stadium Weather Gateway', key: process.env.WEATHER_API_KEY, status: 'Monitoring' },
-                      { name: 'SMS Emergency Comms', key: process.env.TWILIO_AUTH_TOKEN, status: 'Standby' }
+                      { name: 'Gemini Intelligence', isSet: apiStatus.gemini, status: 'Active' },
+                      { name: 'Google Maps Engine', isSet: apiStatus.maps, status: 'Ready' },
+                      { name: 'Live Sports Feed', isSet: apiStatus.sports, status: 'Connected' },
+                      { name: 'Stadium Weather Gateway', isSet: apiStatus.weather, status: 'Monitoring' },
+                      { name: 'SMS Emergency Comms', isSet: apiStatus.twilio, status: 'Standby' },
+                      { name: 'Telegram SOS Hub', isSet: apiStatus.telegram, status: 'Live' }
                     ].map((api) => (
                       <div key={api.name} className="flex items-center justify-between p-3 bg-slate-matte/30 border border-slate-800/20 rounded-xl">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{api.name}</span>
-                        {api.key ? (
+                        {api.isSet ? (
                           <div className="flex items-center gap-2">
                             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                             <span className="text-[9px] font-black text-emerald-400 uppercase">{api.status}</span>
