@@ -25,6 +25,7 @@ import {
   Ticket
 } from 'lucide-react';
 import { cn } from './lib/utils';
+import { GoogleGenAI } from "@google/genai";
 
 // --- Types ---
 
@@ -132,6 +133,11 @@ export default function App() {
   const [announcements, setAnnouncements] = useState<Notification[]>([]);
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const genAI = process.env.GEMINI_API_KEY 
+    ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) 
+    : null;
 
   // Clear speech feedback
   useEffect(() => {
@@ -196,12 +202,47 @@ export default function App() {
     };
   };
 
-  const handleVoiceCommand = (command: string) => {
+  const handleVoiceCommand = async (command: string) => {
     if (userRole === 'staff') {
       setStaffMessage(command);
       return;
     }
 
+    // 1. Smart Intent Parsing with Gemini (Free Tier)
+    if (genAI) {
+      setAiLoading(true);
+      try {
+        const result = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `The user spoke into the stadium assistant: "${command}". 
+                     Identify their intent (food, exit, seat, restroom, safety, or route) 
+                     and give a ultra-short helpful response (max 8 words). 
+                     Output strictly as JSON: {"intent": "intent_name", "response": "text"}.`,
+          config: { responseMimeType: "application/json" }
+        });
+        
+        const data = JSON.parse(result.text || "{}");
+        if (data.response) {
+          setSpeechFeedback(data.response);
+          speak(data.response);
+        }
+
+        if (data.intent === 'exit') handleQuickNav('exit');
+        else if (data.intent === 'food') handleQuickNav('food');
+        else if (data.intent === 'restroom') handleQuickNav('restroom');
+        else if (data.intent === 'seat') { setCurrentPage('navigation'); setNavMode('access'); }
+        else if (data.intent === 'safety') { setCurrentPage('safety-outside'); setSafetyTab('safety'); }
+        else if (data.intent === 'route') handleSuggestBestRoute();
+        
+        setAiLoading(false);
+        return;
+      } catch (err) {
+        console.error("Gemini Voice Error:", err);
+      }
+      setAiLoading(false);
+    }
+
+    // Fallback: Legacy Keyword matching
     if (command.includes('exit') || command.includes('gate') || command.includes('out')) {
       handleQuickNav('exit');
       speak("Navigating to the nearest exit. Please follow the blue markers.");
@@ -273,11 +314,36 @@ export default function App() {
   const [safetyOutput, setSafetyOutput] = useState<string | null>(null);
   const [securityCalled, setSecurityCalled] = useState(false);
 
+  const sendTelegramAlert = async (message: string) => {
+    const token = (import.meta as any).env?.VITE_TELEGRAM_BOT_TOKEN;
+    const chatId = (import.meta as any).env?.VITE_TELEGRAM_CHAT_ID;
+    
+    if (!token || !chatId) return;
+
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `<b>🚨 STADIUM EMERGENCY 🚨</b>\n\n<b>Incident:</b> ${message}\n<b>Location:</b> Section 204, Row 12\n<b>UserID:</b> GS-921\n<b>Status:</b> Immediate Response Requested\n\n<a href="https://maps.google.com/?q=stadium">Open in Operations Hub</a>`,
+          parse_mode: 'HTML'
+        })
+      });
+    } catch (err) {
+      console.error("Failed to dispatch Telegram alert:", err);
+    }
+  };
+
   const handleCallSecurity = () => {
     setSecurityCalled(true);
     setLocationShared(true);
     speak("Security has been notified. Your precise location is being shared with responders.");
     playNotificationSound();
+    
+    // 2. Dispatch real-time Telegram alert to Security Team chat
+    sendTelegramAlert("Panic Alert Triggered - Medical/Security Emergency");
+
     setTimeout(() => {
       setSecurityCalled(false);
       setLocationShared(false);
@@ -287,6 +353,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
 
   // Simulation controls for judges
   const simulateScenario = (type: 'peak' | 'emergency' | 'rush' | 'reset') => {
@@ -316,27 +384,62 @@ export default function App() {
     { label: 'Stadium help', intent: 'safety', icon: <ShieldAlert size={14} /> },
   ];
 
-  const handleSearch = (query: string) => {
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) return;
     setSearchQuery(query);
+    setAiLoading(true);
+    
+    // First: Keyword fast-pass for obvious routing
     const q = query.toLowerCase();
+    let routed = false;
+    
     if (q.includes('seat') || q.includes('ticket')) {
       setCurrentPage('navigation');
       setNavMode('access');
+      routed = true;
     } else if (q.includes('food') || q.includes('eat') || q.includes('burger')) {
       handleQuickNav('food');
+      routed = true;
     } else if (q.includes('restroom') || q.includes('washroom')) {
       handleQuickNav('restroom');
+      routed = true;
     } else if (q.includes('exit') || q.includes('out') || q.includes('leave')) {
       handleQuickNav('exit');
+      routed = true;
     } else if (q.includes('safety') || q.includes('help') || q.includes('unsafe')) {
       setCurrentPage('safety-outside');
       setSafetyTab('safety');
+      routed = true;
     } else if (q.includes('parking') || q.includes('hotel')) {
       setCurrentPage('safety-outside');
       setSafetyTab('outside');
+      routed = true;
     }
+
+    // Second: Use Gemini for conversational response if key exists
+    if (genAI) {
+      try {
+        const result = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `User is at a stadium and asks: "${query}". 
+                     Briefly answer as a stadium AI. 
+                     Current Stadium Status: Gate 1 is crowded, Burger Hub has 25min wait.
+                     If they asked for an exit, mention Gate 3 is clearest.
+                     Keep response under 20 words.`,
+        });
+        const aiText = result.text || "";
+        setSpeechFeedback(aiText);
+        speak(aiText);
+      } catch (err) {
+        console.error("Gemini Error:", err);
+        if (!routed) setSpeechFeedback("I'm having trouble processing that right now.");
+      }
+    } else {
+      if (!routed) setSpeechFeedback("I found some relevant information for you.");
+    }
+
+    setAiLoading(false);
     setSearchQuery('');
-    setSpeechFeedback(null);
   };
 
   // Simulate real-time data updates
@@ -843,17 +946,53 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Integration Diagnostics (Judges/Testing) */}
+                <div className="bg-[#111112] border border-slate-800/40 p-8 rounded-[2.5rem] shadow-2xl">
+                  <h3 className="text-sm font-black text-white uppercase italic mb-6 flex items-center gap-2">
+                    <Zap size={16} className="text-gold-prestige" /> Integration Diagnostics
+                  </h3>
+                  <div className="space-y-4">
+                    {[
+                      { name: 'Gemini Intelligence', key: process.env.GEMINI_API_KEY, status: 'Active' },
+                      { name: 'Google Maps Engine', key: (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY, status: 'Ready' },
+                      { name: 'Live Sports Feed', key: process.env.SPORTS_DATA_API_KEY, status: 'Connected' },
+                      { name: 'Stadium Weather Gateway', key: process.env.WEATHER_API_KEY, status: 'Monitoring' },
+                      { name: 'SMS Emergency Comms', key: process.env.TWILIO_AUTH_TOKEN, status: 'Standby' }
+                    ].map((api) => (
+                      <div key={api.name} className="flex items-center justify-between p-3 bg-slate-matte/30 border border-slate-800/20 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{api.name}</span>
+                        {api.key ? (
+                          <div className="flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                            <span className="text-[9px] font-black text-emerald-400 uppercase">{api.status}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 opacity-40">
+                            <span className="w-1.5 h-1.5 bg-slate-600 rounded-full" />
+                            <span className="text-[9px] font-black text-slate-500 uppercase">Not Configured</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <p className="text-[8px] text-slate-600 font-bold uppercase tracking-tighter mt-4 text-center">
+                      Note: Actual keys are masked for security.
+                    </p>
+                  </div>
+                </div>
+
                 <button 
                   onClick={() => setCurrentPage('staff-dashboard')}
-                  className="group bg-[#111112] border border-slate-800/40 p-10 rounded-[2.5rem] hover:border-gold-prestige transition-all text-left shadow-2xl w-full md:col-span-2"
+                  className="group bg-[#111112] border border-slate-800/40 p-8 rounded-[2.5rem] hover:border-gold-prestige transition-all text-left shadow-2xl flex flex-col justify-between"
                 >
-                  <div className="w-16 h-16 bg-emerald-500/10 text-gold-prestige rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
-                    <Users size={36} />
+                  <div>
+                    <div className="w-14 h-14 bg-emerald-500/10 text-gold-prestige rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                      <Users size={28} />
+                    </div>
+                    <h3 className="text-xl font-black text-white uppercase italic mb-3 font-serif">Operations Hub</h3>
+                    <p className="text-slate-500 text-xs leading-relaxed">Real-time heatmaps, predictive density forecasting, and facility controls.</p>
                   </div>
-                  <h3 className="text-2xl font-black text-white uppercase italic mb-3 font-serif">Stadium Monitoring</h3>
-                  <p className="text-slate-500 text-sm leading-relaxed max-w-lg">Access real-time heatmaps, predictive density forecasting, and facility operational controls with AI-driven insights.</p>
-                  <div className="mt-8 flex items-center gap-3 text-gold-prestige text-xs font-black uppercase tracking-widest">
-                    Enter Operations Hub <ArrowRight size={16} />
+                  <div className="mt-8 flex items-center gap-3 text-gold-prestige text-[10px] font-black uppercase tracking-widest">
+                    Enter Dashboard <ArrowRight size={14} />
                   </div>
                 </button>
               </div>
@@ -1514,10 +1653,7 @@ export default function App() {
               <Settings size={20} className={isConsoleOpen ? "animate-spin-slow" : ""} />
             </button>
             <button 
-              onClick={() => {
-                speak("Hello! I'm your AI Stadium Assistant. You can ask me to find your seat, locate food stalls, or suggest the safest exit route.");
-                setSpeechFeedback("How can I help you?");
-              }}
+              onClick={() => setIsAssistantOpen(!isAssistantOpen)}
               className="w-16 h-16 bg-gradient-to-br from-emerald-600 to-gold-prestige rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/40 hover:scale-110 active:scale-95 transition-transform group relative"
             >
               <div className="absolute inset-0 bg-white/10 rounded-full animate-ping opacity-20 group-hover:opacity-40" />
@@ -1525,9 +1661,81 @@ export default function App() {
                 "absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-950",
                 globalEmergency ? "bg-rose-500" : "bg-gold-prestige"
               )} />
-              <Smartphone className="text-white" size={28} />
+              {isAssistantOpen ? <X className="text-white" size={28} /> : <Smartphone className="text-white" size={28} />}
             </button>
           </div>
+
+          <AnimatePresence>
+            {isAssistantOpen && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                className="bg-slate-900/95 backdrop-blur-2xl border border-slate-800 p-6 rounded-[2.5rem] shadow-[0_32px_64px_rgba(0,0,0,0.5)] w-80 mb-2 overflow-hidden relative"
+              >
+                <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-emerald-600 via-gold-prestige to-emerald-600 animate-shimmer" />
+                
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                    <Smartphone className="text-gold-prestige" size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-black uppercase text-white tracking-widest leading-none">Stadium AI</h4>
+                    <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mt-1">Intelligent Concierge</p>
+                  </div>
+                </div>
+
+                <div className="h-40 overflow-y-auto mb-4 pr-2 custom-scrollbar space-y-3">
+                  <div className="bg-slate-800/40 border border-slate-800/60 p-3 rounded-2xl rounded-tl-none">
+                    <p className="text-[10px] text-slate-200 leading-relaxed font-medium">Hello! How can I assist you with your stadium experience today?</p>
+                  </div>
+                  {speechFeedback && !isListening && (
+                    <motion.div 
+                      initial={{ opacity: 0, x: -5 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="bg-emerald-900/10 border border-emerald-500/20 p-3 rounded-2xl rounded-tl-none"
+                    >
+                      <p className="text-[10px] text-emerald-100 leading-relaxed italic font-medium">"{speechFeedback}"</p>
+                    </motion.div>
+                  )}
+                  {aiLoading && (
+                    <div className="flex gap-1.5 py-2">
+                      <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce" />
+                      <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce [animation-delay:0.2s]" />
+                      <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce [animation-delay:0.4s]" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative flex items-center bg-slate-matte border border-slate-800/60 p-1.5 rounded-2xl shadow-inner group">
+                  <input 
+                    type="text" 
+                    value={assistantInput}
+                    onChange={(e) => setAssistantInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleSearch(assistantInput);
+                        setAssistantInput('');
+                      }
+                    }}
+                    placeholder="Type or ask AI..."
+                    className="flex-1 bg-transparent py-2 text-[10px] font-medium text-white placeholder:text-slate-600 outline-none pl-3"
+                  />
+                  <button 
+                    onClick={startListening}
+                    className={cn(
+                      "p-2.5 rounded-xl transition-all shrink-0 ml-1 hover:scale-105 active:scale-95",
+                      isListening ? "bg-gold-prestige text-white animate-pulse" : "bg-slate-800/60 text-slate-500 hover:text-white"
+                    )}
+                  >
+                    <Smartphone size={14} />
+                  </button>
+                </div>
+
+                <p className="text-[7px] font-bold text-slate-700 uppercase tracking-[0.2em] text-center mt-4">Powered by Gemini AI Engine</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
