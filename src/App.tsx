@@ -96,36 +96,6 @@ const INITIAL_NOTIFICATIONS: Notification[] = [
 
 // --- Components ---
 
-const LiveScoreBoard = () => {
-  return (
-    <div className="w-full bg-slate-900 border-x border-b border-slate-800 rounded-b-3xl p-4 flex items-center justify-between shadow-2xl overflow-hidden relative">
-      <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-fuchsia-500/5" />
-      <div className="flex items-center gap-4 relative z-10">
-        <div className="text-right">
-          <div className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Home</div>
-          <div className="text-xl font-black text-white italic">WARRIORS</div>
-        </div>
-        <div className="bg-slate-950 px-4 py-2 rounded-xl border border-slate-800 flex items-center gap-3">
-          <span className="text-2xl font-black text-cyan-400 tabular-nums">2</span>
-          <span className="text-slate-600 font-bold">-</span>
-          <span className="text-2xl font-black text-slate-400 tabular-nums">1</span>
-        </div>
-        <div>
-          <div className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Away</div>
-          <div className="text-xl font-black text-slate-400 italic">STRIKERS</div>
-        </div>
-      </div>
-      <div className="flex flex-col items-end relative z-10">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
-          <span className="text-sm font-black text-white italic">2nd Half</span>
-        </div>
-        <div className="text-[10px] font-bold text-slate-500 font-mono tracking-tighter">64:12</div>
-      </div>
-    </div>
-  );
-};
-
 const StatusBadge = ({ status }: { status: ZoneStatus }) => {
   const colors = {
     free: 'bg-lime-500/20 text-lime-400 border-lime-500/50',
@@ -155,6 +125,8 @@ export default function App() {
   const [activeRoute, setActiveRoute] = useState<ActiveRoute | null>(null);
   const [isPanicMode, setIsPanicMode] = useState(false);
   const [globalEmergency, setGlobalEmergency] = useState(false);
+  const [isBeaconActive, setIsBeaconActive] = useState(false);
+  const [locationShared, setLocationShared] = useState(false);
   const [staffDirectives, setStaffDirectives] = useState<{ [key: string]: string }>({});
   const [staffMessage, setStaffMessage] = useState('');
   const [announcements, setAnnouncements] = useState<Notification[]>([]);
@@ -184,6 +156,12 @@ export default function App() {
       const utterance = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utterance);
     }
+  };
+
+  const playNotificationSound = () => {
+    const audio = new Audio('https://cdn.pixabay.com/audio/2022/03/15/audio_731383020e.mp3');
+    audio.volume = 0.5;
+    audio.play().catch(e => console.log("Audio play blocked", e));
   };
 
   const startListening = () => {
@@ -261,6 +239,7 @@ export default function App() {
 
   const sendAnnouncement = () => {
     if (!staffMessage.trim()) return;
+    const messageToSpeak = staffMessage;
     const newAnn: Notification = {
       id: Date.now().toString(),
       type: 'alert',
@@ -269,10 +248,9 @@ export default function App() {
     };
     setAnnouncements(prev => [newAnn, ...prev]);
     setNotifications(prev => [newAnn, ...prev]);
+    playNotificationSound();
+    speak(`Priority announcement: ${messageToSpeak}`);
     setStaffMessage('');
-    if (userRole === 'public') {
-      speak(`Priority announcement: ${staffMessage}`);
-    }
   };
 
   const triggerPanic = (active: boolean) => {
@@ -293,8 +271,41 @@ export default function App() {
   const [scanSuccess, setScanSuccess] = useState(false);
   const [outsideResults, setOutsideResults] = useState<{ type: string, items: OutsideItem[] } | null>(null);
   const [safetyOutput, setSafetyOutput] = useState<string | null>(null);
+  const [securityCalled, setSecurityCalled] = useState(false);
+
+  const handleCallSecurity = () => {
+    setSecurityCalled(true);
+    setLocationShared(true);
+    speak("Security has been notified. Your precise location is being shared with responders.");
+    playNotificationSound();
+    setTimeout(() => {
+      setSecurityCalled(false);
+      setLocationShared(false);
+    }, 10000);
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+
+  // Simulation controls for judges
+  const simulateScenario = (type: 'peak' | 'emergency' | 'rush' | 'reset') => {
+    if (type === 'peak') {
+      setZones(prev => prev.map(z => ({ ...z, density: 95, status: 'crowded', waitTime: 45 })));
+      speak("Peak attendance detected. Load balancing active.");
+    } else if (type === 'emergency') {
+      setGlobalEmergency(true);
+    } else if (type === 'rush') {
+      setZones(prev => prev.map(z => z.type === 'food' ? { ...z, density: 90, status: 'crowded', waitTime: 30 } : z));
+      speak("Half-time rush detected in concessions area.");
+    } else if (type === 'reset') {
+      setZones(INITIAL_ZONES);
+      setGlobalEmergency(false);
+      setIsPanicMode(false);
+      speak("Stadium status reset to baseline.");
+    }
+    setIsConsoleOpen(false);
+  };
 
   // Suggestions based on roles and context
   const suggestions = [
@@ -507,32 +518,30 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30">
+    <div className="min-h-screen bg-slate-matte text-slate-200 font-sans selection:bg-gold-prestige/30">
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md px-6 py-5 flex items-center justify-between">
+      <header className="sticky top-0 z-40 border-b border-slate-800/40 bg-slate-matte/80 backdrop-blur-md px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-4">
           {currentPage !== 'home' && currentPage !== 'role-selection' && (
             <button 
               onClick={() => {
-                if (currentPage === 'inside-menu') setCurrentPage('home');
-                else if (currentPage === 'navigation') setCurrentPage('inside-menu');
-                else if (currentPage === 'safety-outside') setCurrentPage('home');
-                else if (currentPage === 'staff-dashboard') setCurrentPage('home');
+                // Instantly return to home
+                setCurrentPage('home');
               }}
-              className="p-3 hover:bg-slate-800 rounded-full transition-colors mr-1 text-slate-400 min-h-[48px] min-w-[48px] flex items-center justify-center"
+              className="p-3 hover:bg-slate-800 rounded-full transition-all mr-1 text-slate-400 min-h-[48px] min-w-[48px] flex items-center justify-center active:scale-90 active:bg-slate-700"
             >
               <ArrowLeft size={24} />
             </button>
           )}
-          <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-fuchsia-600 rounded-2xl flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <div className="w-12 h-12 bg-gradient-to-br from-emerald-700 to-gold-prestige/60 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
             <Zap className="text-white fill-white" size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tighter text-white uppercase italic leading-none">
-              SmartStadium <span className="text-cyan-400">AI</span>
+            <h1 className="text-2xl font-black tracking-tighter text-white uppercase italic leading-none font-serif">
+              SmartStadium <span className="text-gold-prestige">AI</span>
             </h1>
             <div className="flex items-center gap-2 text-[11px] text-slate-500 font-bold uppercase tracking-widest mt-1">
-              <span className={cn("w-2 h-2 rounded-full animate-pulse", globalEmergency ? "bg-rose-500" : "bg-lime-500")} />
+              <span className={cn("w-2 h-2 rounded-full animate-pulse", globalEmergency ? "bg-rose-500" : "bg-gold-prestige")} />
               {globalEmergency ? <span className="text-rose-500">Facility Crisis Mode</span> : 
                currentPage === 'role-selection' ? 'Initialize' : 
                userRole === 'staff' ? 'Staff Interface' : 'Fan Interface'}
@@ -566,8 +575,6 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto p-6 space-y-6">
-        {currentPage === 'home' && <LiveScoreBoard />}
-
         {/* Global Announcement Banner */}
         <AnimatePresence>
           {announcements.length > 0 && currentPage !== 'role-selection' && (
@@ -577,7 +584,7 @@ export default function App() {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="bg-cyan-600 px-6 py-3 rounded-2xl flex items-center justify-between shadow-lg shadow-cyan-600/20">
+              <div className="bg-emerald-700 px-6 py-3 rounded-2xl flex items-center justify-between shadow-lg shadow-emerald-700/20">
                 <div className="flex items-center gap-3">
                   <Bell size={18} className="text-white animate-bounce" />
                   <p className="text-xs font-black text-white uppercase tracking-wider italic">
@@ -606,12 +613,12 @@ export default function App() {
             >
               {isListening ? (
                 <div className="flex gap-1">
-                  <span className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" />
-                  <span className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  <span className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce" />
+                  <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce [animation-delay:0.2s]" />
+                  <span className="w-1 h-1 bg-gold-prestige rounded-full animate-bounce [animation-delay:0.4s]" />
                 </div>
               ) : (
-                <Smartphone size={16} className="text-cyan-400" />
+                <Smartphone size={16} className="text-gold-prestige" />
               )}
               <span className="text-xs font-black uppercase text-white tracking-widest italic">
                 {isListening ? "Listening..." : speechFeedback}
@@ -631,24 +638,24 @@ export default function App() {
               className="min-h-[70vh] flex flex-col items-center justify-center space-y-12"
             >
               <div className="text-center space-y-4">
-                <div className="w-20 h-20 bg-cyan-500/10 text-cyan-400 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-cyan-500/20">
+                <div className="w-20 h-20 bg-emerald-500/10 text-gold-prestige rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/20 border border-gold-prestige/20">
                   <Zap size={40} />
                 </div>
-                <h2 className="text-4xl font-black text-white uppercase tracking-tighter italic">Welcome to SmartStadium</h2>
-                <p className="text-slate-400 font-medium">Please select your operational profile</p>
+                <h2 className="text-4xl md:text-5xl font-black text-white uppercase tracking-tighter italic font-serif">Welcome to SmartStadium</h2>
+                <p className="text-slate-500 font-medium font-serif italic text-lg tracking-wide uppercase opacity-70">Please select your operational profile</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl px-4">
                 <button 
                   onClick={() => {
                     setUserRole('public');
                     setCurrentPage('home');
                   }}
-                  className="group relative overflow-hidden bg-slate-900 border border-slate-800 p-10 rounded-3xl hover:border-cyan-500 transition-all text-left shadow-2xl"
+                  className="group relative overflow-hidden bg-slate-900 border border-slate-800/40 p-10 rounded-3xl hover:border-gold-prestige transition-all text-left shadow-2xl"
                 >
-                  <Users className="text-cyan-400 mb-6 group-hover:scale-110 transition-transform" size={40} />
-                  <h3 className="text-2xl font-black text-white uppercase italic mb-2">Public / Fan</h3>
-                  <p className="text-slate-400 text-sm">Navigating, seat access, facility locating, and fan safety tools.</p>
+                  <Users className="text-emerald-500 mb-6 group-hover:scale-110 transition-transform" size={40} />
+                  <h3 className="text-2xl font-black text-white uppercase italic mb-2 font-serif">Public / Fan</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">Elegant transit, premium seating, and refined safety tools.</p>
                 </button>
 
                 <button 
@@ -656,112 +663,146 @@ export default function App() {
                     setUserRole('staff');
                     setCurrentPage('home');
                   }}
-                  className="group relative overflow-hidden bg-slate-900 border border-slate-800 p-10 rounded-3xl hover:border-fuchsia-500 transition-all text-left shadow-2xl"
+                  className="group relative overflow-hidden bg-slate-900 border border-slate-800/40 p-10 rounded-3xl hover:border-emerald-500 transition-all text-left shadow-2xl"
                 >
-                  <ShieldAlert className="text-fuchsia-400 mb-6 group-hover:scale-110 transition-transform" size={40} />
-                  <h3 className="text-2xl font-black text-white uppercase italic mb-2">Stadium Staff</h3>
-                  <p className="text-slate-400 text-sm">Monitoring, crowd management, emergency response, and system alerts.</p>
+                  <ShieldAlert className="text-gold-prestige mb-6 group-hover:scale-110 transition-transform" size={40} />
+                  <h3 className="text-2xl font-black text-white uppercase italic mb-2 font-serif">Command / Staff</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed">Integrated monitoring, crowd intelligence, and elite response.</p>
                 </button>
               </div>
             </motion.div>
           )}
 
-          {/* 1. HOME PAGE */}
+          {/* 1. FAN HOME PAGE (UNIFIED DASHBOARD) */}
           {currentPage === 'home' && userRole === 'public' && (
             <motion.div 
-              key="home"
-              initial={{ opacity: 0, y: 30 }}
+              key="fan-home"
+              initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="min-h-[65vh] flex flex-col items-center justify-center space-y-10 py-10"
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="min-h-[70vh] flex flex-col items-center space-y-12 py-8"
             >
               {/* Central Hub Branding */}
-              <div className="text-center space-y-6 max-w-xl">
+              <div className="text-center space-y-4 max-w-xl">
                 <motion.div 
                   initial={{ scale: 0.5, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="w-24 h-24 bg-gradient-to-br from-cyan-500 to-fuchsia-600 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-2xl shadow-cyan-500/30"
+                  className="w-20 h-20 bg-gradient-to-br from-emerald-600 to-gold-prestige rounded-2xl flex items-center justify-center mx-auto shadow-2xl shadow-emerald-500/30"
                 >
-                  <Zap className="text-white fill-white" size={40} />
+                  <Zap className="text-white fill-white" size={32} />
                 </motion.div>
-                <div className="space-y-2">
-                  <h2 className="text-4xl md:text-5xl font-black text-white uppercase italic tracking-tighter">
-                    Good Evening, <span className="text-cyan-400">Fan</span>
+                <div className="space-y-1">
+                  <h2 className="text-4xl md:text-6xl font-black text-white uppercase italic tracking-tighter text-center leading-none font-serif">
+                    Ready, <span className="text-gold-prestige">Fan?</span>
                   </h2>
-                  <p className="text-slate-400 font-medium text-lg leading-relaxed px-4">
-                    How can SmartStadium assist your game day experience today?
+                  <p className="text-slate-500 font-medium text-base text-center uppercase tracking-widest font-serif opacity-70">
+                    Your AI Prestige Companion
                   </p>
                 </div>
               </div>
 
-              {/* Smart Command Hub (Search) */}
-              <div className="w-full max-w-2xl px-4 relative">
-                <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 via-fuchsia-500/20 to-cyan-500/20 blur-3xl opacity-30 -z-10 animate-pulse" />
-                <div className="relative flex items-center bg-slate-900/50 backdrop-blur-xl border border-slate-700/50 p-2 rounded-[2rem] shadow-2xl">
-                  <div className="pl-6 pr-4 text-slate-500 hidden sm:block">
-                    <MapIcon size={24} />
+              {/* Rectangular Command Center */}
+              <div className="w-full max-w-sm px-2">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-gold-prestige rounded-full animate-pulse" />
+                    <span className="text-[8px] font-black uppercase text-slate-500 tracking-[0.2em]">Live Stadium Intel</span>
                   </div>
-                  <input 
-                    type="text" 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch(searchQuery)}
-                    placeholder="Ask about seats, food, or safety..."
-                    className="flex-1 bg-transparent py-5 text-lg font-medium text-white placeholder:text-slate-600 outline-none pl-4 sm:pl-0"
-                  />
-                  <div className="flex items-center gap-2 pr-2">
-                    <button 
-                      onClick={startListening}
-                      className={cn(
-                        "p-4 rounded-full transition-all shrink-0",
-                        isListening ? "bg-cyan-600 text-white animate-pulse" : "bg-slate-800 text-slate-400 hover:text-white"
-                      )}
-                    >
-                      <Smartphone size={20} />
-                    </button>
-                    <button 
-                      onClick={() => handleSearch(searchQuery)}
-                      className="bg-cyan-600 hover:bg-cyan-500 text-white rounded-[1.5rem] px-8 py-4 font-black uppercase tracking-widest transition-all shadow-lg shadow-cyan-600/20 hidden min-[400px]:block"
-                    >
-                      Search
-                    </button>
-                  </div>
+                  <span className="text-[8px] font-bold text-slate-600 uppercase tracking-widest tabular-nums">Sync: Active</span>
                 </div>
+                <div className="bg-slate-900/40 border border-slate-800/30 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col divide-y divide-slate-800/40">
+                  
+                  {/* Row 1: Search */}
+                  <div className="p-5 space-y-3 relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-gold-prestige/5 transition-opacity opacity-0 group-hover:opacity-100 -z-10" />
+                    <div className="flex items-center gap-2">
+                       <Smartphone className="text-gold-prestige" size={16} />
+                       <h3 className="text-[11px] font-black text-white uppercase italic font-serif">Search Intelligence</h3>
+                    </div>
+                    <div className="relative flex items-center bg-slate-matte border border-slate-800/60 p-1 rounded-xl shadow-inner">
+                      <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSearch(searchQuery)}
+                        placeholder="Ask AI Anything..."
+                        className="flex-1 bg-transparent py-2 text-[10px] font-medium text-white placeholder:text-slate-600 outline-none pl-3"
+                      />
+                      <button 
+                        onClick={startListening}
+                        className={cn(
+                          "p-2 rounded-lg transition-all shrink-0 ml-1",
+                          isListening ? "bg-gold-prestige text-white animate-pulse" : "bg-slate-800/60 text-slate-500 hover:text-white"
+                        )}
+                      >
+                        <Smartphone size={12} />
+                      </button>
+                    </div>
+                  </div>
 
-                {/* Quick Suggestion Chips */}
-                <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-                  {suggestions.map((s) => (
+                  {/* Row 2: Access & Map (Split Row) */}
+                  <div className="grid grid-cols-2 divide-x divide-slate-800/40">
                     <button 
-                      key={s.label}
-                      onClick={() => handleSearch(s.intent)}
-                      className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-6 py-4 rounded-full text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white transition-all hover:scale-105 active:scale-95 shadow-xl"
+                      onClick={() => {
+                        setCurrentPage('navigation');
+                        setNavMode('access');
+                      }}
+                      className="p-5 flex items-center gap-3 group hover:bg-slate-800/20 transition-all text-left"
                     >
-                      {s.icon}
-                      {s.label}
+                      <div className="w-10 h-10 bg-slate-950/50 rounded-xl flex items-center justify-center border border-slate-800/40 group-hover:border-gold-prestige/30 group-hover:bg-slate-950">
+                        <Ticket className="text-gold-prestige" size={20} />
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-black text-white uppercase italic font-serif">Access</div>
+                        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest opacity-60">Ticketing</div>
+                      </div>
                     </button>
-                  ))}
-                </div>
-              </div>
+                    <button 
+                      onClick={() => {
+                        setCurrentPage('navigation');
+                        setNavMode('route');
+                      }}
+                      className="p-5 flex items-center gap-3 group hover:bg-slate-800/20 transition-all text-left"
+                    >
+                      <div className="w-10 h-10 bg-slate-950/50 rounded-xl flex items-center justify-center border border-slate-800/40 group-hover:border-gold-prestige/30 group-hover:bg-slate-950">
+                        <Navigation className="text-gold-prestige" size={20} />
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-black text-white uppercase italic font-serif">Mapping</div>
+                        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest opacity-60">Facilities</div>
+                      </div>
+                    </button>
+                  </div>
 
-              {/* Bottom Insight Feed */}
-              <div className="pt-12 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl px-4">
-                <div className="bg-slate-900/40 border border-slate-800/50 p-7 rounded-[2rem] flex items-center gap-5 group hover:border-cyan-500/30 transition-colors">
-                  <div className="w-14 h-14 bg-cyan-500/10 text-cyan-400 rounded-2xl flex items-center justify-center shrink-0">
-                    <TrendingUp size={28} />
+                  {/* Row 3: Safety */}
+                  <div className="p-5 flex items-center justify-between group relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-600/5 transition-opacity opacity-0 group-hover:opacity-100 -z-10" />
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-slate-950/50 rounded-xl flex items-center justify-center border border-slate-800/40">
+                        <ShieldAlert className="text-gold-prestige" size={20} />
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-black text-white uppercase italic font-serif">Safety & Assistance</div>
+                        <div className="text-[8px] font-bold text-slate-500 uppercase tracking-widest opacity-60">Live AI Support</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => { setCurrentPage('safety-outside'); setSafetyTab('safety'); }}
+                        className="text-[8px] font-black uppercase tracking-widest bg-slate-800/60 px-4 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition-all"
+                      >
+                        Hub
+                      </button>
+                      <button 
+                        onClick={() => { setCurrentPage('safety-outside'); setSafetyTab('outside'); }}
+                        className="text-[8px] font-black uppercase tracking-widest bg-slate-800/60 px-4 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 transition-all"
+                      >
+                        Outside
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-widest text-cyan-500 mb-1">AI Recommendation</div>
-                    <p className="text-sm font-semibold text-slate-300 leading-snug">Section 204 has 20% less congestion. Better visibility route found.</p>
-                  </div>
-                </div>
-                <div className="bg-slate-900/40 border border-slate-800/50 p-7 rounded-[2rem] flex items-center gap-5 group hover:border-fuchsia-500/30 transition-colors">
-                  <div className="w-14 h-14 bg-fuchsia-500/10 text-fuchsia-400 rounded-2xl flex items-center justify-center shrink-0">
-                    <Utensils size={28} />
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-black uppercase tracking-widest text-fuchsia-500 mb-1">Live Suggestion</div>
-                    <p className="text-sm font-semibold text-slate-300 leading-snug">Burger Point stall current wait time is under 4 minutes.</p>
-                  </div>
+
                 </div>
               </div>
             </motion.div>
@@ -776,27 +817,27 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95 }}
               className="space-y-8 py-4 "
             >
-              <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-10 relative overflow-hidden shadow-2xl">
+              <div className="bg-[#111112] border border-slate-800/40 rounded-[2.5rem] p-10 relative overflow-hidden shadow-2xl">
                 <div className="absolute top-0 right-0 p-6">
-                  <span className="flex items-center gap-2 bg-rose-500 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
+                  <span className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20">
                     <TrendingUp size={12} /> Live Ops Active
                   </span>
                 </div>
-                <h2 className="text-4xl font-black text-white uppercase italic mb-2 tracking-tighter">Command Center</h2>
-                <p className="text-slate-500 font-medium">Global Stadium Monitoring & Response Interface</p>
+                <h2 className="text-4xl font-black text-white uppercase italic mb-2 tracking-tighter font-serif">Command Center</h2>
+                <p className="text-slate-500 font-medium uppercase tracking-[0.2em] text-[10px] opacity-70">Global Stadium Intelligence & Response</p>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-12">
-                  <div className="bg-slate-950/50 border border-slate-800 p-8 rounded-3xl text-center space-y-1">
+                  <div className="bg-slate-matte/50 border border-slate-800/40 p-8 rounded-3xl text-center space-y-1">
                     <div className="text-4xl font-black text-white tabular-nums tracking-tighter">48,291</div>
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Live Attendance</div>
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-serif italic">Live Attendance</div>
                   </div>
-                  <div className="bg-slate-950/50 border border-slate-800 p-8 rounded-3xl text-center space-y-1">
-                    <div className="text-4xl font-black text-amber-500 tabular-nums tracking-tighter">14</div>
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Alerts</div>
+                  <div className="bg-slate-matte/50 border border-slate-800/40 p-8 rounded-3xl text-center space-y-1">
+                    <div className="text-4xl font-black text-gold-prestige tabular-nums tracking-tighter">14</div>
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-serif italic">Active Alerts</div>
                   </div>
-                  <div className="bg-slate-950/50 border border-slate-800 p-8 rounded-3xl text-center space-y-1">
+                  <div className="bg-slate-matte/50 border border-slate-800/40 p-8 rounded-3xl text-center space-y-1">
                     <div className="text-4xl font-black text-rose-500 tabular-nums tracking-tighter">1</div>
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Panic Reported</div>
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-serif italic">Panic Reported</div>
                   </div>
                 </div>
               </div>
@@ -804,39 +845,15 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <button 
                   onClick={() => setCurrentPage('staff-dashboard')}
-                  className="group bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] hover:border-cyan-500 transition-all text-left shadow-2xl"
+                  className="group bg-[#111112] border border-slate-800/40 p-10 rounded-[2.5rem] hover:border-gold-prestige transition-all text-left shadow-2xl w-full md:col-span-2"
                 >
-                  <div className="w-16 h-16 bg-cyan-500/10 text-cyan-400 rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
+                  <div className="w-16 h-16 bg-emerald-500/10 text-gold-prestige rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
                     <Users size={36} />
                   </div>
-                  <h3 className="text-2xl font-black text-white uppercase italic mb-3">Crowd Intelligence</h3>
-                  <p className="text-slate-500 text-sm leading-relaxed">Access real-time heatmaps and predictive density forecasting models.</p>
-                  <div className="mt-8 flex items-center gap-3 text-cyan-400 text-xs font-black uppercase tracking-widest">
-                    Enter Intelligence Hub <ArrowRight size={16} />
-                  </div>
-                </button>
-
-                <button 
-                  onClick={() => {
-                    const newInc: Incident = { 
-                      id: `inc-${Date.now()}`, 
-                      location: 'Food Court B', 
-                      type: 'medical', 
-                      time: 'Just now', 
-                      status: 'active' 
-                    };
-                    setIncidents([newInc, ...incidents]);
-                    setCurrentPage('staff-dashboard');
-                  }}
-                  className="group bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] hover:border-rose-500 transition-all text-left shadow-2xl"
-                >
-                  <div className="w-16 h-16 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
-                    <ShieldAlert size={36} />
-                  </div>
-                  <h3 className="text-2xl font-black text-white uppercase italic mb-3">Incident Control</h3>
-                  <p className="text-slate-500 text-sm leading-relaxed">Dispatch security units and manage emergency response priorities.</p>
-                  <div className="mt-8 flex items-center gap-3 text-rose-500 text-xs font-black uppercase tracking-widest">
-                    Open Control Panel <ArrowRight size={16} />
+                  <h3 className="text-2xl font-black text-white uppercase italic mb-3 font-serif">Stadium Monitoring</h3>
+                  <p className="text-slate-500 text-sm leading-relaxed max-w-lg">Access real-time heatmaps, predictive density forecasting, and facility operational controls with AI-driven insights.</p>
+                  <div className="mt-8 flex items-center gap-3 text-gold-prestige text-xs font-black uppercase tracking-widest">
+                    Enter Operations Hub <ArrowRight size={16} />
                   </div>
                 </button>
               </div>
@@ -875,7 +892,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4">
                   <h3 className="text-sm font-black text-white uppercase italic flex items-center gap-2">
-                    <Bell size={16} className="text-cyan-400" /> Dispatch Announcement
+                    <Bell size={16} className="text-emerald-500" /> Dispatch Announcement
                   </h3>
                   <div className="flex gap-2">
                     <input 
@@ -883,26 +900,26 @@ export default function App() {
                       value={staffMessage}
                       onChange={(e) => setStaffMessage(e.target.value)}
                       placeholder="Type priority message..."
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                      className="flex-1 bg-slate-matte border border-slate-800 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-gold-prestige transition-colors"
                     />
                     <button 
                       onClick={startListening}
-                      className={cn("p-2 rounded-xl border transition-colors", isListening ? "bg-cyan-600 border-cyan-400 text-white" : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white")}
+                      className={cn("p-2 rounded-xl border transition-colors", isListening ? "bg-emerald-700 border-emerald-500 text-white" : "bg-slate-matte border-slate-800 text-slate-500 hover:text-white")}
                     >
                       <Smartphone size={18} />
                     </button>
                   </div>
                   <button 
                     onClick={sendAnnouncement}
-                    className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                    className="w-full bg-emerald-700 hover:bg-emerald-600 text-white py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-700/20"
                   >
                     Push to All Fan Devices
                   </button>
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4">
-                  <h3 className="text-sm font-black text-white uppercase italic flex items-center gap-2">
-                    <Navigation size={16} className="text-fuchsia-400" /> Crowd Control Actions
+                  <h3 className="text-sm font-black text-white uppercase italic flex items-center gap-2 font-serif">
+                    <Navigation size={16} className="text-gold-prestige" /> Crowd Control Actions
                   </h3>
                   <div className="grid grid-cols-2 gap-2">
                     {['Redirect Gate 3', 'Close Gate 1', 'Route A Clear', 'Reset Gates'].map(action => (
@@ -915,7 +932,7 @@ export default function App() {
                           setStaffDirectives(prev => ({ ...prev, [action]: 'active' }));
                           speak(`Sending directive: ${action}`);
                         }}
-                        className="bg-slate-950 border border-slate-800 py-2 rounded-xl text-[10px] font-black uppercase text-slate-400 hover:border-fuchsia-500 hover:text-white transition-all"
+                        className="bg-slate-matte border border-slate-800/40 py-2 rounded-xl text-[10px] font-black uppercase text-slate-500 hover:border-gold-prestige hover:text-white transition-all"
                       >
                         {action}
                       </button>
@@ -976,100 +993,19 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
-                {/* Incident Queue */}
-                <div className="lg:col-span-12 space-y-4 mt-8">
-                  <h3 className="text-lg font-black text-rose-500 uppercase italic tracking-wide">Incident Queue</h3>
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
-                    <div className="divide-y divide-slate-800">
-                      {incidents.map(inc => (
-                        <div key={inc.id} className="p-6 flex items-center justify-between hover:bg-slate-800/50 transition-colors">
-                          <div className="flex items-center gap-6">
-                            <div className={cn(
-                              "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
-                              inc.type === 'panic' ? "bg-rose-500/20 text-rose-500" : "bg-blue-500/20 text-blue-500"
-                            )}>
-                              {inc.type === 'panic' ? <ShieldAlert size={24} /> : <AlertTriangle size={24} />}
-                            </div>
-                            <div>
-                              <div className="text-lg font-black text-white uppercase italic">{inc.location}</div>
-                              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">{inc.type} alert • {inc.time}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            {inc.status === 'active' ? (
-                              <button 
-                                onClick={() => {
-                                  setIncidents(prev => prev.map(i => i.id === inc.id ? { ...i, status: 'resolved' } : i));
-                                }}
-                                className="bg-rose-600 text-white px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-rose-500 transition-all"
-                              >
-                                Resolve
-                              </button>
-                            ) : (
-                              <span className="flex items-center gap-2 text-lime-400 text-xs font-black uppercase">
-                                <CheckCircle2 size={16} /> Resolved
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      {incidents.length === 0 && (
-                        <div className="p-12 text-center text-slate-600 font-bold uppercase">No active incidents</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
               </div>
             </motion.div>
           )}
 
-          {/* 2. INSIDE STADIUM (MAIN MENU) */}
-          {currentPage === 'inside-menu' && (
-            <motion.div 
-              key="inside-menu"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-8 py-12"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="text-3xl font-black text-white uppercase italic tracking-tight">Main Menu</h2>
-                <p className="text-slate-400">Select an option to proceed</p>
-              </div>
 
-              <div className="grid grid-cols-1 gap-4 max-w-md mx-auto">
-                {[
-                  { label: 'Access My Seat', page: 'navigation', mode: 'access', icon: <Ticket className="text-cyan-400" /> },
-                  { label: 'Navigate Inside', page: 'navigation', mode: 'route', icon: <Navigation className="text-fuchsia-400" /> },
-                  { label: 'Safety & Help', page: 'safety-outside', mode: 'safety', icon: <ShieldAlert className="text-amber-400" /> },
-                ].map((item) => (
-                  <button 
-                    key={item.label}
-                    onClick={() => {
-                      setCurrentPage(item.page as Page);
-                      if (item.page === 'navigation') setNavMode(item.mode as NavMode);
-                      if (item.page === 'safety-outside') setSafetyTab('safety');
-                    }}
-                    className="flex items-center gap-6 bg-slate-900 border border-slate-800 p-8 rounded-3xl hover:border-slate-600 transition-all group"
-                  >
-                    <div className="w-12 h-12 bg-slate-950 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      {item.icon}
-                    </div>
-                    <span className="text-xl font-black text-white uppercase italic tracking-wide">{item.label}</span>
-                    <ChevronRight className="ml-auto text-slate-600" />
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
           {/* 3. ACCESS & NAVIGATION PAGE */}
           {currentPage === 'navigation' && (
             <motion.div 
               key="navigation"
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
               className="space-y-8 relative"
             >
               {/* Scanner Simulation Overlay */}
@@ -1081,26 +1017,26 @@ export default function App() {
                     exit={{ opacity: 0 }}
                     className="fixed inset-0 z-[60] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-6"
                   >
-                    <div className="relative w-64 h-64 border-2 border-cyan-500/30 rounded-3xl overflow-hidden">
+                    <div className="relative w-72 h-72 border-2 border-gold-prestige/20 rounded-[3rem] overflow-hidden shadow-2xl">
                       {!scanSuccess && (
                         <motion.div 
                           animate={{ top: ['0%', '100%', '0%'] }}
                           transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                          className="absolute left-0 right-0 h-1 bg-cyan-500 shadow-[0_0_15px_rgba(34,211,238,0.8)] z-10"
+                          className="absolute left-0 right-0 h-0.5 bg-gold-prestige shadow-[0_0_20px_rgba(212,175,55,0.8)] z-10"
                         />
                       )}
-                      <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-gold-prestige/5 to-transparent" />
                       <div className="h-full w-full flex items-center justify-center">
                         {scanSuccess ? (
                           <motion.div
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
-                            className="text-lime-400"
+                            className="text-emerald-500"
                           >
-                            <CheckCircle2 size={64} />
+                            <CheckCircle2 size={80} />
                           </motion.div>
                         ) : (
-                          <Scan size={64} className="text-cyan-500/20" />
+                          <Scan size={80} className="text-gold-prestige/10" />
                         )}
                       </div>
                     </div>
@@ -1126,13 +1062,14 @@ export default function App() {
                   <div className="space-y-4">
                     <button 
                       onClick={handleScanTicket}
-                      className="w-full bg-cyan-600/10 border border-cyan-500/30 p-8 rounded-3xl hover:bg-cyan-600/20 transition-all text-left group"
+                      className="w-full bg-emerald-500/5 border border-emerald-500/20 p-10 rounded-[2.5rem] hover:bg-emerald-500/10 transition-all text-left shadow-2xl relative overflow-hidden group"
                     >
-                      <div className="flex items-center gap-4 mb-2">
-                        <Scan className="text-cyan-400" size={24} />
-                        <h3 className="text-xl font-black text-white uppercase italic">Scan Ticket</h3>
+                      <div className="absolute inset-0 bg-gradient-to-br from-gold-prestige/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="flex items-center gap-4 mb-4 relative z-10">
+                        <Scan className="text-gold-prestige" size={32} />
+                        <h3 className="text-2xl font-black text-white uppercase italic font-serif">Scan Ticket</h3>
                       </div>
-                      <p className="text-sm text-cyan-400/70 font-bold uppercase tracking-wider">Quick and automatic</p>
+                      <p className="text-sm text-slate-500 font-bold uppercase tracking-widest opacity-70 relative z-10">Instant Digital Recognition</p>
                     </button>
 
                     <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl space-y-6">
@@ -1146,7 +1083,7 @@ export default function App() {
                               placeholder="--"
                               value={seatInfo[field.toLowerCase() as keyof typeof seatInfo]}
                               onChange={(e) => setSeatInfo(prev => ({ ...prev, [field.toLowerCase()]: e.target.value }))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-4 text-center font-bold text-white focus:border-cyan-500 outline-none transition-colors"
+                              className="w-full bg-slate-matte border border-slate-800/40 rounded-xl px-3 py-4 text-center font-bold text-white focus:border-gold-prestige outline-none transition-colors"
                             />
                           </div>
                         ))}
@@ -1167,15 +1104,40 @@ export default function App() {
                       {activeRoute ? `Route to ${activeRoute.destination}` : 'Navigation'}
                     </h2>
                     {activeRoute && (
-                      <div className="flex items-center gap-2 text-cyan-400 font-black uppercase text-xs">
+                      <div className="flex items-center gap-2 text-gold-prestige font-black uppercase text-xs">
                         <Clock size={14} /> {activeRoute.totalTime}
                       </div>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Directions List */}
-                    <div className="lg:col-span-6 space-y-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                    {/* Quick Nav Buttons (Sidebar) */}
+                    <div className="lg:col-span-4 space-y-6">
+                      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8">
+                        <h3 className="text-lg font-black text-white uppercase italic mb-6 flex items-center gap-2 font-serif">
+                          <Navigation size={18} className="text-gold-prestige" /> Facility Nav
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3">
+                          {[
+                            { label: 'Go to Food', type: 'food', icon: <Utensils size={18} /> },
+                            { label: 'Find Washroom', type: 'restroom', icon: <Users size={18} /> },
+                            { label: 'Go to Exit', type: 'exit', icon: <ArrowRight size={18} /> },
+                          ].map(btn => (
+                            <button 
+                              key={btn.label}
+                              onClick={() => handleQuickNav(btn.type)}
+                              className="flex items-center gap-4 bg-slate-matte border border-slate-800/40 p-5 rounded-2xl hover:border-gold-prestige/50 transition-all group"
+                            >
+                              <div className="text-gold-prestige group-hover:scale-110 transition-transform">{btn.icon}</div>
+                              <span className="text-sm font-black text-white uppercase italic tracking-wide">{btn.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Directions List (Main Content) */}
+                    <div className="lg:col-span-8 space-y-4">
                       {activeRoute ? (
                         <div className="space-y-3">
                           {activeRoute.isAlternate && (
@@ -1192,44 +1154,25 @@ export default function App() {
                               transition={{ delay: i * 0.1 }}
                               className="flex items-center gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl"
                             >
-                              <div className="w-8 h-8 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center text-[10px] font-black text-cyan-400">
+                              <div className="w-8 h-8 rounded-full bg-slate-matte border border-slate-800 flex items-center justify-center text-[10px] font-black text-gold-prestige">
                                 {i + 1}
                               </div>
                               <div className="flex-1">
                                 <p className="text-sm font-bold text-white">{step.instruction}</p>
-                                <p className="text-[10px] text-cyan-500/60 font-mono uppercase mt-1 tracking-tight">{step.distance}</p>
+                                <p className="text-[10px] text-emerald-500/60 font-mono uppercase mt-1 tracking-tight">{step.distance}</p>
                               </div>
                             </motion.div>
                           ))}
                         </div>
                       ) : (
-                        <div className="h-full flex items-center justify-center border-2 border-dashed border-slate-800 rounded-3xl p-12 text-center">
-                          <p className="text-slate-500 font-bold uppercase tracking-widest text-sm">Select a destination to start</p>
+                        <div className="h-full min-h-[400px] flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-3xl p-12 text-center bg-slate-900/20">
+                          <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4 text-slate-600">
+                            <Navigation size={32} />
+                          </div>
+                          <p className="text-slate-500 font-black uppercase tracking-widest text-sm">Select a destination to start</p>
+                          <p className="text-xs text-slate-600 mt-2">Use the quick nav or AI search to route</p>
                         </div>
                       )}
-                    </div>
-
-                    {/* Quick Nav Buttons */}
-                    <div className="lg:col-span-6 space-y-6">
-                      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8">
-                        <h3 className="text-lg font-black text-white uppercase italic mb-6">Quick Navigation</h3>
-                        <div className="grid grid-cols-1 gap-3">
-                          {[
-                            { label: 'Go to Food', type: 'food', icon: <Utensils size={18} /> },
-                            { label: 'Find Washroom', type: 'restroom', icon: <Users size={18} /> },
-                            { label: 'Go to Exit', type: 'exit', icon: <ArrowRight size={18} /> },
-                          ].map(btn => (
-                            <button 
-                              key={btn.label}
-                              onClick={() => handleQuickNav(btn.type)}
-                              className="flex items-center gap-4 bg-slate-950 border border-slate-800 p-5 rounded-2xl hover:border-cyan-500/50 transition-all group"
-                            >
-                              <div className="text-cyan-400 group-hover:scale-110 transition-transform">{btn.icon}</div>
-                              <span className="text-sm font-black text-white uppercase italic tracking-wide">{btn.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -1244,26 +1187,27 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
               className="space-y-8"
             >
               {/* Tabs */}
-              <div className="flex bg-slate-900 p-1 rounded-2xl max-w-sm mx-auto border border-slate-800">
-                {(['safety', 'outside'] as SafetyTab[]).map(tab => (
-                  <button 
-                    key={tab}
-                    onClick={() => {
-                      setSafetyTab(tab);
-                      setSafetyOutput(null);
-                    }}
-                    className={cn(
-                      "flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                      safetyTab === tab ? "bg-slate-800 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"
-                    )}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
+                    <div className="flex bg-[#111112] p-1 rounded-2xl max-w-sm mx-auto border border-slate-800/40">
+                      {(['safety', 'outside'] as SafetyTab[]).map(tab => (
+                        <button 
+                          key={tab}
+                          onClick={() => {
+                            setSafetyTab(tab);
+                            setSafetyOutput(null);
+                          }}
+                          className={cn(
+                            "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                            safetyTab === tab ? "bg-slate-800 text-gold-prestige shadow-lg shadow-black/50" : "text-slate-500 hover:text-slate-300"
+                          )}
+                        >
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
 
               {safetyTab === 'safety' ? (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1327,9 +1271,9 @@ export default function App() {
                       <motion.div 
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="p-6 bg-cyan-500/10 border border-cyan-500/30 rounded-3xl"
+                        className="p-6 bg-emerald-500/5 border border-emerald-500/20 rounded-3xl"
                       >
-                        <p className="text-sm font-bold text-cyan-400 leading-relaxed">{safetyOutput}</p>
+                        <p className="text-sm font-bold text-gold-prestige leading-relaxed">{safetyOutput}</p>
                       </motion.div>
                     )}
 
@@ -1346,20 +1290,20 @@ export default function App() {
                 <div className="space-y-8">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
-                      { label: 'Hotels', icon: <Hotel size={24} />, color: 'text-blue-400' },
-                      { label: 'Restaurants', icon: <Utensils size={24} />, color: 'text-orange-400' },
-                      { label: 'Parking', icon: <Car size={24} />, color: 'text-lime-400' },
-                      { label: 'Stadium', icon: <MapIcon size={24} />, color: 'text-cyan-400' },
+                      { label: 'Hotels', icon: <Hotel size={24} />, color: 'text-gold-prestige' },
+                      { label: 'Restaurants', icon: <Utensils size={24} />, color: 'text-gold-prestige' },
+                      { label: 'Parking', icon: <Car size={24} />, color: 'text-gold-prestige' },
+                      { label: 'Stadium', icon: <MapIcon size={24} />, color: 'text-gold-prestige' },
                     ].map(cat => (
                       <button 
                         key={cat.label}
                         onClick={() => handleOutsideSearch(cat.label)}
-                        className="bg-slate-900 border border-slate-800 p-6 rounded-3xl hover:border-slate-600 transition-all group"
+                        className="bg-slate-900 border border-slate-800/40 p-6 rounded-3xl hover:border-gold-prestige/40 transition-all group"
                       >
-                        <div className={cn("mb-4 p-3 w-fit mx-auto rounded-2xl bg-slate-950 border border-slate-800 group-hover:scale-110 transition-transform", cat.color)}>
+                        <div className={cn("mb-4 p-3 w-fit mx-auto rounded-2xl bg-slate-matte border border-slate-800 group-hover:scale-110 transition-transform shadow-xl", cat.color)}>
                           {cat.icon}
                         </div>
-                        <div className="text-sm font-black text-white uppercase tracking-widest">{cat.label}</div>
+                        <div className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{cat.label}</div>
                       </button>
                     ))}
                   </div>
@@ -1392,6 +1336,8 @@ export default function App() {
                               </div>
                               <button 
                                 onClick={() => {
+                                  const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.name + " near Stadium")}`;
+                                  window.open(url, '_blank', 'noopener,noreferrer');
                                   const newNotif: Notification = { id: Date.now().toString(), type: 'update', message: `Opening ${item.name} in External Maps...`, time: 'Just now' };
                                   setNotifications([newNotif, ...notifications]);
                                 }}
@@ -1419,52 +1365,107 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-rose-950/90 backdrop-blur-2xl z-[100] flex items-center justify-center p-6"
+            className={cn(
+              "fixed inset-0 backdrop-blur-2xl z-[100] flex items-center justify-center p-6 transition-colors duration-200",
+              isBeaconActive ? "bg-white" : "bg-rose-950/90"
+            )}
           >
-            <div className="max-w-md w-full text-center space-y-8">
+            {isBeaconActive && (
+              <motion.div 
+                animate={{ opacity: [0, 1, 0] }}
+                transition={{ repeat: Infinity, duration: 0.5 }}
+                className="absolute inset-0 bg-rose-600 z-[101] pointer-events-none"
+              />
+            )}
+            
+            <div className="max-w-md w-full text-center space-y-8 relative z-[102]">
               <motion.div 
                 animate={{ scale: [1, 1.1, 1] }}
                 transition={{ repeat: Infinity, duration: 2 }}
-                className="w-24 h-24 bg-rose-600 rounded-full mx-auto flex items-center justify-center shadow-[0_0_50px_rgba(225,29,72,0.5)]"
+                className={cn(
+                  "w-24 h-24 rounded-full mx-auto flex items-center justify-center transition-colors",
+                  isBeaconActive ? "bg-white" : "bg-rose-600 shadow-[0_0_50px_rgba(225,29,72,0.5)]"
+                )}
               >
-                <ShieldAlert size={48} className="text-white" />
+                <ShieldAlert size={48} className={isBeaconActive ? "text-rose-600" : "text-white"} />
               </motion.div>
               
               <div>
-                <h2 className="text-4xl font-black text-white uppercase italic tracking-tighter mb-2">Emergency Mode</h2>
-                <p className="text-rose-200 font-medium">Help is on the way. Please follow the instructions below.</p>
+                <h2 className={cn("text-4xl font-black uppercase italic tracking-tighter mb-2", isBeaconActive ? "text-rose-600" : "text-white")}>
+                  Emergency Mode
+                </h2>
+                <p className={isBeaconActive ? "text-rose-800 font-black" : "text-rose-200 font-medium"}>
+                  {locationShared ? "RESCUE DISPATCHED - LIVE GPS ACTIVE" : "Help is on the way. Please stay calm."}
+                </p>
               </div>
 
-              <div className="bg-rose-900/50 border border-rose-500/30 rounded-3xl p-6 text-left space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-rose-600 rounded-xl flex items-center justify-center shrink-0">
+              <div className={cn("rounded-3xl p-6 text-left space-y-4 border transition-colors", isBeaconActive ? "bg-white border-rose-600" : "bg-rose-900/50 border-rose-500/30")}>
+                <button 
+                  onClick={() => {
+                    handleQuickNav('exit');
+                    setIsPanicMode(false);
+                    setIsBeaconActive(false);
+                    speak("Directing you to the safest exit. Please follow the instructions on your screen.");
+                  }}
+                  className="w-full flex items-center gap-4 group"
+                >
+                  <div className="w-10 h-10 bg-rose-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                     <Navigation size={20} className="text-white" />
                   </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white uppercase">Nearest Safe Exit</h4>
-                    <p className="text-xs text-rose-200">Gate 2 (South) - 120m away. Path is clear.</p>
+                  <div className="text-left">
+                    <h4 className={cn("text-sm font-bold uppercase group-hover:text-rose-200 transition-colors", isBeaconActive ? "text-rose-600" : "text-white")}>Evacuation Route</h4>
+                    <p className={isBeaconActive ? "text-rose-800" : "text-rose-200 text-xs"}>Gate 2 (South) - 120m. Follow green markers.</p>
                   </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-rose-600 rounded-xl flex items-center justify-center shrink-0">
-                    <Users size={20} className="text-white" />
+                </button>
+                
+                <div className={cn("flex items-center gap-4 border-t pt-4", isBeaconActive ? "border-rose-600/20" : "border-rose-500/20")}>
+                  <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shrink-0 animate-pulse">
+                    <CheckCircle2 size={20} className="text-white" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-white uppercase">Security Status</h4>
-                    <p className="text-xs text-rose-200">Officers dispatched to Section 204. ETA: 2 mins.</p>
+                    <h4 className={cn("text-sm font-bold uppercase", isBeaconActive ? "text-rose-600" : "text-white")}>System Connected</h4>
+                    <p className={isBeaconActive ? "text-rose-800" : "text-rose-200 text-xs"}>Security is monitoring your audio/video feed.</p>
                   </div>
                 </div>
               </div>
 
               <div className="flex flex-col gap-3">
-                <button className="w-full bg-white text-rose-600 font-black uppercase tracking-widest py-4 rounded-2xl shadow-xl hover:scale-105 transition-transform">
-                  Call Stadium Security
-                </button>
                 <button 
-                  onClick={() => triggerPanic(false)}
-                  className="w-full bg-rose-800/50 text-rose-200 font-bold uppercase tracking-widest py-3 rounded-2xl hover:bg-rose-800 transition-colors"
+                  onClick={() => setIsBeaconActive(!isBeaconActive)}
+                  className={cn(
+                    "w-full font-black uppercase tracking-widest py-4 rounded-2xl shadow-xl transition-all border-2",
+                    isBeaconActive 
+                      ? "bg-rose-600 border-white text-white animate-bounce" 
+                      : "bg-transparent border-rose-500 text-rose-500 hover:bg-rose-500/10"
+                  )}
                 >
-                  Cancel Alert
+                  {isBeaconActive ? "Disable Beacon" : "Flash Visual Beacon"}
+                </button>
+                
+                <button 
+                  onClick={handleCallSecurity}
+                  disabled={securityCalled}
+                  className={cn(
+                    "w-full font-black uppercase tracking-widest py-4 rounded-2xl shadow-xl transition-all",
+                    securityCalled 
+                      ? "bg-emerald-600 text-white cursor-not-allowed" 
+                      : "bg-white text-rose-600 hover:scale-[1.02] active:scale-95"
+                  )}
+                >
+                  {securityCalled ? "GPS Location Shared" : "Share Live Location"}
+                </button>
+                
+                <button 
+                  onClick={() => {
+                    setIsPanicMode(false);
+                    setIsBeaconActive(false);
+                  }}
+                  className={cn(
+                    "w-full font-bold uppercase tracking-widest py-3 rounded-2xl transition-colors",
+                    isBeaconActive ? "bg-rose-200 text-rose-800" : "bg-rose-800/50 text-rose-200 hover:bg-rose-800"
+                  )}
+                >
+                  {globalEmergency ? "Minimize" : "I am Safe - Cancel Alert"}
                 </button>
               </div>
             </div>
@@ -1473,17 +1474,61 @@ export default function App() {
       </AnimatePresence>
 
       {/* AI Assistant Floating Bubble */}
-      {userRole === 'public' && (
-        <button 
-          onClick={() => {
-            speak("Hello! I'm your AI Stadium Assistant. You can ask me to find your seat, locate food stalls, or suggest the safest exit route.");
-            setSpeechFeedback("How can I help you?");
-          }}
-          className="fixed bottom-8 right-8 w-16 h-16 bg-gradient-to-br from-cyan-500 to-fuchsia-600 rounded-full flex items-center justify-center shadow-2xl shadow-cyan-500/40 z-50 hover:scale-110 active:scale-95 transition-transform"
-        >
-          <div className="absolute inset-0 bg-white/10 rounded-full animate-ping opacity-20" />
-          <Smartphone className="text-white" size={28} />
-        </button>
+      {userRole === 'public' && !isPanicMode && (
+        <div className="fixed bottom-8 right-8 flex flex-col items-end gap-3 z-50">
+          <AnimatePresence>
+            {isConsoleOpen && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20, scale: 0.8 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.8 }}
+                className="bg-slate-900/95 backdrop-blur-xl border border-slate-800 p-4 rounded-3xl shadow-2xl w-64 mb-2"
+              >
+                <h4 className="text-[10px] font-black uppercase text-gold-prestige tracking-widest mb-3 border-b border-slate-800 pb-2">Judge's Simulation Console</h4>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { id: 'peak', label: 'Peak Crowd Simulation', color: 'bg-rose-500/10 text-rose-500 border-rose-500/20' },
+                    { id: 'rush', label: 'Concession Rush (Half-Time)', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
+                    { id: 'emergency', label: 'Trigger Global Emergency', color: 'bg-rose-600 text-white border-transparent shadow-lg shadow-rose-600/20' },
+                    { id: 'reset', label: 'Reset Baseline conditions', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
+                  ].map(scenario => (
+                    <button 
+                      key={scenario.id}
+                      onClick={() => simulateScenario(scenario.id as any)}
+                      className={cn("w-full py-2.5 px-3 rounded-xl text-[9px] font-black uppercase tracking-wider text-left border transition-all hover:scale-[1.02] active:scale-95", scenario.color)}
+                    >
+                      {scenario.label}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsConsoleOpen(!isConsoleOpen)}
+              className="bg-slate-900/80 backdrop-blur-md border border-slate-800 p-3 rounded-full text-slate-500 hover:text-gold-prestige transition-colors shadow-lg"
+              title="Simulation Controls"
+            >
+              <Settings size={20} className={isConsoleOpen ? "animate-spin-slow" : ""} />
+            </button>
+            <button 
+              onClick={() => {
+                speak("Hello! I'm your AI Stadium Assistant. You can ask me to find your seat, locate food stalls, or suggest the safest exit route.");
+                setSpeechFeedback("How can I help you?");
+              }}
+              className="w-16 h-16 bg-gradient-to-br from-emerald-600 to-gold-prestige rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/40 hover:scale-110 active:scale-95 transition-transform group relative"
+            >
+              <div className="absolute inset-0 bg-white/10 rounded-full animate-ping opacity-20 group-hover:opacity-40" />
+              <div className={cn(
+                "absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-950",
+                globalEmergency ? "bg-rose-500" : "bg-gold-prestige"
+              )} />
+              <Smartphone className="text-white" size={28} />
+            </button>
+          </div>
+        </div>
       )}
 
       <style>{`
@@ -1491,6 +1536,13 @@ export default function App() {
           to {
             stroke-dashoffset: -1000;
           }
+        }
+        .animate-spin-slow {
+          animation: spin 3s linear infinite;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         .custom-scrollbar::-webkit-scrollbar {
           width: 4px;
